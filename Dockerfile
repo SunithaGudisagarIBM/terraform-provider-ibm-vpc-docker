@@ -2,14 +2,19 @@ From alpine:3.7
 
 ENV GOPATH /go
 
-ENV GOLANG_VERSION 1.16.15
+ENV GOLANG_VERSION 1.19.2
 ENV GOLANG_SRC_URL https://golang.org/dl/go$GOLANG_VERSION.src.tar.gz
-ENV GOLANG_SRC_SHA256 90a08c689279e35f3865ba510998c33a63255c36089b3ec206c912fc0568c3d3
 
-ENV TERRAFORM_VERSION 0.15.5
-ENV TERRAFORM_IBMCLOUD_VERSION 1.38.0
+ENV TERRAFORM_VERSION 1.3.2
+# ENV TERRAFORM_IBMCLOUD_VERSION 1.46.0
+
+ENV GIT_CLONE https://github.com/ibm-vpc/terraform-provider-ibm.git
+ENV GIT_BRANCH master
 
 ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
+
+ENV IAAS_CLASSIC_API_KEY="IBM"
+ENV IAAS_CLASSIC_USERNAME="IBM"
 
 RUN set -ex \
 	&& apk update \
@@ -20,7 +25,6 @@ RUN set -ex \
 	&& cat /no-pic.patch \
 	&& export GOROOT_BOOTSTRAP="$(go env GOROOT)" \
 	&& wget -q "$GOLANG_SRC_URL" -O golang.tar.gz \
-	&& echo "$GOLANG_SRC_SHA256  golang.tar.gz" | sha256sum -c - \
 	&& tar -C /usr/local -xzf golang.tar.gz \
 	&& rm golang.tar.gz \
 	&& cd /usr/local/go/src \
@@ -43,6 +47,30 @@ RUN rm -rf terraform_${TERRAFORM_VERSION}_linux_amd64.zip
 
 RUN echo "Terraform installation done"
 
+WORKDIR $GOPATH/src
+
+RUN git clone $GIT_CLONE
+
+WORKDIR $GOPATH/src/terraform-provider-ibm
+
+RUN git fetch origin $GIT_BRANCH
+
+RUN git checkout $GIT_BRANCH
+
+RUN go mod vendor
+
+RUN go install
+
+# WORKDIR $GOPATH/src
+
+# RUN rm -rf terraform-provider-ibm
+
+WORKDIR $GOPATH/bin/
+
+RUN chmod +x terraform-provider-ibm
+
+RUN echo "IBM Cloud Terraform Provider installation done"
+
 WORKDIR "/root"
 
 RUN mkdir -p "/root/.terraform.d/plugin-cache/registry.terraform.io/ibm-cloud/ibm/${TERRAFORM_IBMCLOUD_VERSION}/linux_amd64"
@@ -53,14 +81,13 @@ WORKDIR "/root/.terraform.d/plugin-cache/registry.terraform.io/ibm-cloud/ibm/${T
 
 ENV TF_PLUGIN_CACHE_DIR="/root/.terraform.d/plugin-cache"
 
-RUN wget https://github.com/IBM-Cloud/terraform-provider-ibm/releases/download/v${TERRAFORM_IBMCLOUD_VERSION}/terraform-provider-ibm_${TERRAFORM_IBMCLOUD_VERSION}_linux_amd64.zip
+RUN cp $GOPATH/bin/terraform-provider-ibm  /root/.terraform.d/plugin-cache/registry.terraform.io/ibm-cloud/ibm/${TERRAFORM_IBMCLOUD_VERSION}/linux_amd64
 
-RUN unzip terraform-provider-ibm_${TERRAFORM_IBMCLOUD_VERSION}_linux_amd64.zip
-
-RUN chmod +x terraform-provider-ibm_*
-
-RUN rm -rf terraform-provider-ibm_${TERRAFORM_IBMCLOUD_VERSION}_linux_amd64.zip
+RUN chmod +x terraform-provider-ibm
 
 RUN echo "IBM Cloud Terraform Provider installation done"
 
-WORKDIR "/root"
+WORKDIR $GOPATH/src/terraform-provider-ibm
+
+ENTRYPOINT [ make testacc TEST=./ibm/service/vpc TESTARGS='-run=TestAccIBMISVPCDatasource_basic' > "/root/tfp.log" ]
+
